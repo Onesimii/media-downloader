@@ -255,23 +255,41 @@ def get_formats(request: Request, url: str):
     try:
         with YoutubeDL(BASE_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
-            formats: List[Dict[str, Any]] = []
-            seen = set()
+            formats_raw = info.get("formats", [])
             
-            for f in info.get("formats", []):
-                width, height = f.get("width"), f.get("height")
-                if not width or not height:
-                    continue
+            filtered_map = {} # height -> best_format_object
+            
+            for f in formats_raw:
+                width = f.get("width")
+                height = f.get("height")
+                ext = f.get("ext", "")
+                filesize = f.get("filesize") or f.get("filesize_approx")
                 
+                # 1. Basic filtering
+                if not width or not height: continue
+                if height < 360: continue # Only >= 360p
+                if not filesize: continue # Exclude unknown size
+                if ext == "mhtml": continue # Exclude mhtml
+                
+                # 2. Duplicate resolution handling (Prefer MP4)
+                current_best = filtered_map.get(height)
+                if not current_best:
+                    filtered_map[height] = f
+                else:
+                    # If this is mp4 and previous wasn't, or if previous was mhtml? (already filtered)
+                    # Simple rule: if new one is mp4, replace older non-mp4
+                    if ext == "mp4" and current_best.get("ext") != "mp4":
+                        filtered_map[height] = f
+
+            # 3. Format the results
+            final_formats = []
+            for height, f in filtered_map.items():
+                width = f.get("width")
                 res_val = f"{height}p"
                 if height >= 2160: res_val += " (4K)"
                 elif height >= 1440: res_val += " (2K)"
                 
-                key = (height, f.get("ext"))
-                if key in seen: continue
-                seen.add(key)
-                
-                formats.append({
+                final_formats.append({
                     "format_id": f["format_id"],
                     "ext": f.get("ext"),
                     "resolution": f"{width}x{height} ({res_val})",
@@ -279,8 +297,14 @@ def get_formats(request: Request, url: str):
                     "height": height,
                 })
             
-            formats.sort(key=lambda x: x["height"], reverse=True)
-            return {"title": info.get("title"), "formats": formats, "thumbnail": info.get("thumbnail")}
+            # 4. Sort by height descending
+            final_formats.sort(key=lambda x: x["height"], reverse=True)
+            
+            return {
+                "title": info.get("title"), 
+                "formats": final_formats, 
+                "thumbnail": info.get("thumbnail")
+            }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching formats: {str(e)}")
 
