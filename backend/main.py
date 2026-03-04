@@ -55,9 +55,9 @@ import zipfile
 import tempfile
 import shutil
 
-# URL validation regex (Updated for Spotify)
+# URL validation regex (Updated for Spotify & SoundCloud)
 URL_REGEX = re.compile(
-    r'^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|open\.spotify\.com)/.+$'
+    r'^(https?://)?(www\.|m\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|open\.spotify\.com|soundcloud\.com)/.+$'
 )
 
 def _is_rate_limited(ip: str) -> bool:

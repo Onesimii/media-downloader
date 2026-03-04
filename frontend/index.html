@@ -145,6 +145,102 @@
       border-color: rgba(233, 107, 255, 0.4);
     }
 
+    .badge.sp {
+      background: rgba(30, 215, 96, 0.12);
+      color: #1ed760;
+      border: 1px solid rgba(30, 215, 96, 0.25);
+    }
+
+    .badge.sp:hover {
+      box-shadow: 0 0 15px rgba(30, 215, 96, 0.4);
+      background: rgba(30, 215, 96, 0.2);
+      border-color: rgba(30, 215, 96, 0.4);
+    }
+
+    .badge.sc {
+      background: rgba(255, 136, 0, 0.12);
+      color: #ff8800;
+      border: 1px solid rgba(255, 136, 0, 0.25);
+    }
+
+    .badge.sc:hover {
+      box-shadow: 0 0 15px rgba(255, 136, 0, 0.4);
+      background: rgba(255, 136, 0, 0.2);
+      border-color: rgba(255, 136, 0, 0.4);
+    }
+
+    /* Range Toggle Switch Styles */
+    .mode-switcher {
+      display: flex;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      padding: 4px;
+      border-radius: 12px;
+      width: fit-content;
+      margin: 20px auto 0;
+      position: relative;
+      user-select: none;
+    }
+
+    .mode-btn {
+      padding: 8px 24px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mode-btn.active {
+      color: #fff;
+    }
+
+    .mode-slider {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      height: calc(100% - 8px);
+      width: calc(50% - 4px);
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 8px;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 12px rgba(124, 110, 245, 0.3);
+    }
+
+    .music-active .mode-slider {
+      transform: translateX(100%);
+    }
+
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 18px;
+      overflow: hidden;
+      min-height: 32px;
+    }
+
+    .badges-container {
+      display: flex;
+      transition: transform 0.3s ease, opacity 0.2s ease;
+    }
+
+    .badges-video,
+    .badges-music {
+      display: flex;
+      gap: 8px;
+      transition: all 0.3s ease;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -527,10 +623,23 @@
     <div class="logo">⬇️</div>
     <h1>Media Downloader</h1>
     <p>Download videos and audio in seconds</p>
+    <div class="mode-switcher" id="mode-switcher">
+      <div class="mode-slider"></div>
+      <div class="mode-btn active" onclick="setMode('video')">🎬 Video</div>
+      <div class="mode-btn" onclick="setMode('music')">🎵 Music</div>
+    </div>
+
     <div class="badge-row">
-      <span class="badge yt">YouTube</span>
-      <span class="badge tt">TikTok</span>
-      <span class="badge ig">Instagram</span>
+      <div id="video-badges" class="badges-video">
+        <span class="badge yt">YouTube</span>
+        <span class="badge tt">TikTok</span>
+        <span class="badge ig">Instagram</span>
+      </div>
+      <div id="music-badges" class="badges-music hidden">
+        <span class="badge sp">Spotify</span>
+        <span class="badge sc">SoundCloud</span>
+        <span class="badge yt">YouTube MP3</span>
+      </div>
     </div>
   </header>
 
@@ -563,6 +672,38 @@
 
   <script>
     const API = ""; // API is served from the same origin
+    let currentMode = 'video';
+
+    function setMode(mode) {
+      if (currentMode === mode) return;
+      currentMode = mode;
+
+      const switcher = document.getElementById('mode-switcher');
+      const videoBadges = document.getElementById('video-badges');
+      const musicBadges = document.getElementById('music-badges');
+      const urlInput = document.getElementById('url-input');
+      const btns = switcher.querySelectorAll('.mode-btn');
+
+      if (mode === 'music') {
+        switcher.classList.add('music-active');
+        btns[1].classList.add('active');
+        btns[0].classList.remove('active');
+
+        // Animate badges
+        videoBadges.classList.add('hidden');
+        musicBadges.classList.remove('hidden');
+        urlInput.placeholder = "Paste music link (Spotify, SoundCloud, YT)…";
+      } else {
+        switcher.classList.remove('music-active');
+        btns[0].classList.add('active');
+        btns[1].classList.remove('active');
+
+        // Animate badges
+        musicBadges.classList.add('hidden');
+        videoBadges.classList.remove('hidden');
+        urlInput.placeholder = "Paste video URL here…";
+      }
+    }
 
     function fmtDuration(sec) {
       if (!sec) return "";
