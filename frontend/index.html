@@ -212,6 +212,36 @@
       box-shadow: 0 4px 12px rgba(124, 110, 245, 0.3);
     }
 
+    .pro-badge-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(233, 107, 255, 0.15);
+      color: #e96bff;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      border: 1px solid rgba(233, 107, 255, 0.3);
+      margin-top: 12px;
+    }
+
+    .upgrade-section {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-pro {
+      background: linear-gradient(135deg, #FFD700, #FFA500);
+      color: #000;
+      font-weight: 800;
+      box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+      border: none;
+    }
+
     .music-active .mode-slider {
       transform: translateX(100%);
     }
@@ -629,6 +659,11 @@
       <div class="mode-btn" onclick="setMode('music')">🎵 Music</div>
     </div>
 
+    <div class="upgrade-section">
+      <div id="user-status-display"></div>
+      <button id="upgrade-btn" class="btn btn-pro hidden" onclick="upgradeToPro()">⭐ Upgrade to PRO</button>
+    </div>
+
     <div class="badge-row">
       <div id="video-badges" class="badges-video">
         <span class="badge yt">YouTube</span>
@@ -675,6 +710,53 @@
     let currentMode = 'video';
     let lastFetchedData = null;
     let lastFetchedUrl = "";
+    let userId = localStorage.getItem('md_user_id');
+
+    if (!userId) {
+      userId = 'u_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('md_user_id', userId);
+    }
+
+    async function checkUserStatus() {
+      try {
+        const res = await fetch(`${API}/user-status/${userId}`);
+        const data = await res.json();
+
+        const statusDiv = document.getElementById('user-status-display');
+        const upgradeBtn = document.getElementById('upgrade-btn');
+
+        if (data.is_pro) {
+          statusDiv.innerHTML = `<div class="pro-badge-header">💎 PRO ACCOUNT</div>`;
+          upgradeBtn.classList.add('hidden');
+        } else {
+          statusDiv.innerHTML = `<div style="font-size: 0.75rem; color: var(--muted)">Downloads today: ${data.downloads_today}/${data.limit}</div>`;
+          upgradeBtn.classList.remove('hidden');
+        }
+      } catch (e) { console.error('Status check failed'); }
+    }
+
+    async function upgradeToPro() {
+      const btn = document.getElementById('upgrade-btn');
+      btn.disabled = true;
+      btn.innerText = "Redirecting...";
+
+      try {
+        const res = await fetch(`${API}/create-checkout-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId })
+        });
+        const { url } = await res.json();
+        window.location.href = url;
+      } catch (e) {
+        alert("Payment system error. Please try again.");
+        btn.disabled = false;
+        btn.innerText = "⭐ Upgrade to PRO";
+      }
+    }
+
+    checkUserStatus();
+    setInterval(checkUserStatus, 30000);
 
     function setMode(mode) {
       if (currentMode === mode) return;
@@ -782,9 +864,16 @@
         const res = await fetch(`${API}/start-download`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, format_id, ext, audio_only })
+          body: JSON.stringify({ url, format_id, ext, audio_only, user_id: userId })
         });
-        const { job_id } = await res.json();
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.detail || "Download failed");
+        }
+
+        const job_id = data.job_id;
+        checkUserStatus(); // Update count
 
         progressContainer.style.display = 'block';
         saveBtn.style.display = 'none';
@@ -844,7 +933,7 @@
           return;
         }
 
-        const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}`);
+        const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}&user_id=${userId}`);
         const data = await res.json();
         lastFetchedData = data;
         lastFetchedUrl = url;

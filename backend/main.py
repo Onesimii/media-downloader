@@ -11,9 +11,37 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from yt_dlp import YoutubeDL
+import stripe
+from sqlalchemy import create_all, Column, String, Boolean, Integer, Float, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
+import datetime
 
 # Define absolute paths for reliability
 BASE_DIR = Path(__file__).resolve().parent
+DATABASE_URL = f"sqlite:///{BASE_DIR}/downloader.db"
+
+# Stripe Setup (Replace with your keys)
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "sk_test_51P...")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_...")
+PRO_PLAN_PRICE_ID = os.environ.get("PRO_PLAN_PRICE_ID", "price_...")
+stripe.api_key = STRIPE_SECRET_KEY
+
+# Database Setup
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, index=True) # Browser UUID
+    is_pro = Column(Boolean, default=False)
+    downloads_today = Column(Integer, default=0)
+    last_download_date = Column(DateTime, default=datetime.datetime.utcnow)
+    stripe_customer_id = Column(String, nullable=True)
+
+Base.metadata.create_all(bind=engine)
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -54,6 +82,31 @@ rate_limit_store: Dict[str, List[float]] = {}
 import zipfile
 import tempfile
 import shutil
+
+# Helper for DB sessions
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def _get_or_create_user(db, user_id: str) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        user = User(id=user_id)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    
+    # Reset daily downloads if new day
+    now = datetime.datetime.utcnow()
+    if user.last_download_date.date() < now.date():
+        user.downloads_today = 0
+        user.last_download_date = now
+        db.commit()
+    
+    return user
 
 # URL validation regex (Updated for Spotify & SoundCloud)
 URL_REGEX = re.compile(
@@ -182,9 +235,26 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
         else:
             ydl_opts["format"] = "bestvideo+bestaudio/best"
 
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_title = info.get("title", "video")
+        if "spotify.com/" in url:
+            # For Spotify, we need to search on YouTube
+            with YoutubeDL({**BASE_OPTS, "extract_flat": True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                # If it's a track, info will have title and artist
+                title = info.get("title", "Unknown Title")
+                artist = info.get("uploader") or info.get("artist") or ""
+                search_query = f"ytsearch1:{artist} - {title} audio"
+                
+            # Now download from YouTube search result
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_query, download=True)
+                # The actual info is inside the first search result
+                if "entries" in info:
+                    info = info["entries"][0]
+                video_title = info.get("title", title)
+        else:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                video_title = info.get("title", "video")
 
         filepath = _find_downloaded_file(file_id)
         final_ext = Path(filepath).suffix
@@ -285,9 +355,20 @@ def get_info(request: Request, url: str):
         raise HTTPException(status_code=400, detail="Invalid video URL.")
 
     try:
-        opts = {**BASE_OPTS, "extract_flat": False}
+        is_spotify = "spotify.com/track/" in url
+        opts = {**BASE_OPTS, "extract_flat": is_spotify}
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            
+            if is_spotify:
+                return {
+                    "title": info.get("title", "Unknown"),
+                    "thumbnail": info.get("thumbnail"),
+                    "duration": info.get("duration"),
+                    "uploader": info.get("uploader") or info.get("artist"),
+                    "filesize": 0,
+                    "is_spotify": True
+                }
             
             # Size check
             filesize = info.get("filesize") or info.get("filesize_approx") or 0
@@ -308,18 +389,23 @@ def get_info(request: Request, url: str):
 
 
 @app.get("/formats")
-def get_formats(request: Request, url: str):
+def get_formats(request: Request, url: str, user_id: str = "anonymous"):
     """Return available video formats filtered and sorted."""
+    db = SessionLocal()
+    user = _get_or_create_user(db, user_id)
+    is_pro = user.is_pro
+    db.close()
+
     if _is_rate_limited(request.client.host):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
 
     if not URL_REGEX.match(url):
         raise HTTPException(status_code=400, detail="Invalid video URL.")
 
-    # Prevent formats endpoint from hanging on Spotify playlists
-    if "spotify.com/playlist/" in url:
-        return {"title": "Spotify Playlist", "formats": [], "is_spotify": True}
-
+    # Prevent formats endpoint from hanging on Spotify links
+    if "spotify.com/" in url:
+        return {"title": "Spotify", "formats": [], "is_spotify": True}
+        
     try:
         with YoutubeDL(BASE_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -337,6 +423,7 @@ def get_formats(request: Request, url: str):
                 # 1. Basic filtering
                 if not width or not height: continue
                 if height < 360: continue # Only >= 360p
+                if not is_pro and height > 720: continue # Limit free to 720p
                 if ext == "mhtml": continue # Exclude mhtml
                 
                 # 2. Identify if it's a video stream (combined or video-only)
@@ -422,10 +509,19 @@ def start_playlist_download(
     request: Request,
     background_tasks: BackgroundTasks,
     playlist_name: str = Body(..., embed=True),
-    tracks: List[str] = Body(..., embed=True)
+    tracks: List[str] = Body(..., embed=True),
+    user_id: str = Body("anonymous", embed=True)
 ):
     """Start batch download and zipping."""
+    db = SessionLocal()
+    user = _get_or_create_user(db, user_id)
+    
+    if not user.is_pro:
+        db.close()
+        raise HTTPException(status_code=403, detail="Playlist downloads are only available for PRO accounts. Upgrade to PRO today!")
+
     if _is_rate_limited(request.client.host):
+        db.close()
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     if len(tracks) > 30:
@@ -449,11 +545,25 @@ def start_download(
     url: str = Body(..., embed=True),
     format_id: Optional[str] = Body(None, embed=True),
     ext: Optional[str] = Body(None, embed=True),
-    audio_only: bool = Body(False, embed=True)
+    audio_only: bool = Body(False, embed=True),
+    user_id: str = Body("anonymous", embed=True)
 ):
     """Kicks off an asynchronous download job."""
+    db = SessionLocal()
+    user = _get_or_create_user(db, user_id)
+    
+    if not user.is_pro and user.downloads_today >= 5:
+        db.close()
+        raise HTTPException(status_code=403, detail="Daily download limit reached for free account (5/day). Upgrade to PRO!")
+
     if _is_rate_limited(request.client.host):
+        db.close()
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
+
+    # Increment download count
+    user.downloads_today += 1
+    db.commit()
+    db.close()
 
     if not URL_REGEX.match(url):
         raise HTTPException(status_code=400, detail="Invalid video URL.")
@@ -504,6 +614,62 @@ def download_file(job_id: str):
         filename=job["filename"]
     )
 
+
+@app.get("/user-status/{user_id}")
+def get_user_status(user_id: str):
+    db = SessionLocal()
+    user = _get_or_create_user(db, user_id)
+    status = {
+        "is_pro": user.is_pro,
+        "downloads_today": user.downloads_today,
+        "limit": 5 if not user.is_pro else "Unlimited"
+    }
+    db.close()
+    return status
+
+@app.post("/create-checkout-session")
+async def create_checkout_session(user_id: str = Body(..., embed=True)):
+    try:
+        checkout_session = stripe.checkout.Session.create(
+            line_items=[{
+                'price': PRO_PLAN_PRICE_ID,
+                'quantity': 1,
+            }],
+            mode='subscription',
+            success_url=f"http://localhost:8000/?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"http://localhost:8000/?canceled=true",
+            client_reference_id=user_id,
+        )
+        return {"url": checkout_session.url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        user_id = session.get("client_reference_id")
+        if user_id:
+            db = SessionLocal()
+            user = _get_or_create_user(db, user_id)
+            user.is_pro = True
+            user.stripe_customer_id = session.get("customer")
+            db.commit()
+            db.close()
+
+    return {"status": "success"}
 
 @app.get("/")
 def root():

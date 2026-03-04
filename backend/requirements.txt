@@ -3,3 +3,5 @@ uvicorn[standard]
 yt-dlp
 python-multipart
 aiofiles
+stripe
+sqlalchemy
