@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from yt_dlp import YoutubeDL
 import stripe
+import requests
+import json
 from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine
@@ -115,6 +117,62 @@ def _get_or_create_user(db, user_id: str) -> User:
         db.commit()
     
     return user
+
+def _get_spotify_metadata(url: str) -> Dict[str, str]:
+    """Extract metadata from Spotify Embed endpoint (token-less)."""
+    try:
+        # Extract track ID
+        # URLs: https://open.spotify.com/track/ID?si=... or https://open.spotify.com/track/ID
+        track_id_match = re.search(r'track/([a-zA-Z0-9]+)', url)
+        if not track_id_match:
+            raise ValueError("Invalid Spotify track URL")
+        
+        track_id = track_id_match.group(1)
+        embed_url = f"https://open.spotify.com/embed/track/{track_id}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(embed_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        # The metadata is in a JSON blob inside a <script id="initial-state"> or similar
+        # For simplicity and reliability, we can also use the OG tags from the embed page
+        html = response.text
+        
+        title_match = re.search(r'<meta property="og:title" content="([^"]+)">', html)
+        artist_match = re.search(r'<meta property="og:description" content="([^·]+) · [^"]+">', html)
+        thumb_match = re.search(r'<meta property="og:image" content="([^"]+)">', html)
+
+        title = title_match.group(1) if title_match else ""
+        artist = artist_match.group(1).strip() if artist_match else ""
+        thumbnail = thumb_match.group(1) if thumb_match else ""
+
+        # Clean title if it contains "song by" (fallback)
+        if " - song by " in title.lower():
+            title = title.split(" - song by ")[0]
+            
+        if not title or not artist:
+            # Try alternate parsing of script data if OG tags fail
+            state_match = re.search(r'<script id="resource" type="application/json">([^<]+)</script>', html)
+            if state_match:
+                data = json.loads(state_match.group(1))
+                title = data.get("name", title)
+                artist = data.get("artists", [{}])[0].get("name", artist)
+                thumbnail = data.get("album", {}).get("images", [{}])[0].get("url", thumbnail)
+
+        if not title or not artist:
+            raise ValueError("Metadata not found in Spotify page")
+
+        return {
+            "title": title,
+            "artist": artist,
+            "thumbnail": thumbnail
+        }
+    except Exception as e:
+        print(f"Spotify metadata fetch error: {e}")
+        raise e
 
 # URL validation regex (Updated for Spotify & SoundCloud)
 URL_REGEX = re.compile(
@@ -244,19 +302,15 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
             ydl_opts["format"] = "bestvideo+bestaudio/best"
 
         if "spotify.com/track/" in url:
-            # For Spotify, use yt-dlp to extract metadata accurately
-            # We use ignoreerrors=True to bypass the DRM warning/error and just get metadata if possible
-            spotify_opts = {**BASE_OPTS, "extract_flat": True, "ignoreerrors": True}
-            with YoutubeDL(spotify_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if not info:
-                    raise Exception("yt-dlp could not extract info from Spotify track (possibly DRM or restricted).")
-                
-                title = info.get("track") or info.get("title")
-                artist = info.get("artist") or info.get("uploader")
-                
-                if not title or not artist:
-                    raise Exception("Could not extract Track Title or Artist from Spotify metadata")
+            # For Spotify, fetch metadata via API/Embed (bypass yt-dlp DRM errors)
+            try:
+                meta = _get_spotify_metadata(url)
+                title = meta["title"]
+                artist = meta["artist"]
+            except Exception as e:
+                jobs[job_id]["status"] = "failed"
+                jobs[job_id]["error"] = f"Failed to get Spotify metadata: {str(e)}"
+                return
 
             # Refined search query for better accuracy
             search_query = f"ytsearch1:{artist} - {title} official audio"
@@ -392,27 +446,18 @@ def get_info(request: Request, url: str):
             info = ydl.extract_info(url, download=False)
             
             if is_spotify:
-                spotify_opts = {**BASE_OPTS, "extract_flat": True, "ignoreerrors": True}
-                with YoutubeDL(spotify_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    raise HTTPException(status_code=400, detail="Could not extract metadata from Spotify track URL (DRM or restricted).")
-
-                title = info.get("track") or info.get("title")
-                artist = info.get("artist") or info.get("uploader")
-                
-                if not title or not artist:
-                   raise HTTPException(status_code=400, detail="Could not extract metadata from Spotify track URL.")
-
-                return {
-                    "title": title,
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-                    "uploader": artist,
-                    "filesize": 0,
-                    "is_spotify": True
-                }
+                try:
+                    meta = _get_spotify_metadata(url)
+                    return {
+                        "title": meta["title"],
+                        "thumbnail": meta["thumbnail"],
+                        "duration": 0, # Duration not available in embed tags easily
+                        "uploader": meta["artist"],
+                        "filesize": 0,
+                        "is_spotify": True
+                    }
+                except Exception as e:
+                   raise HTTPException(status_code=400, detail=f"Could not extract metadata from Spotify: {str(e)}")
             
             # Size check
             filesize = info.get("filesize") or info.get("filesize_approx") or 0
