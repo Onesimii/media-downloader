@@ -38,16 +38,6 @@ BASE_OPTS = {
     "ignoreerrors": True,
     "youtube_include_dash_manifest": True,
     "youtube_include_hls_manifest": True,
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "ios", "tv"]
-        }
-    },
-    "http_headers": {
-        "User-Agent": "com.google.android.youtube/17.31.35 (Linux; U; Android 12; GB) gzip",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-us,en;q=0.5",
-    },
 }
 
 # Configuration constants
