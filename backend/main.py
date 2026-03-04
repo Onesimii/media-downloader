@@ -35,17 +35,18 @@ BASE_OPTS = {
     "socket_timeout": 30,
     "retries": 10,
     "noplaylist": True,
+    "ignoreerrors": True,
+    "youtube_include_dash_manifest": True,
+    "youtube_include_hls_manifest": True,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web", "mweb"]
+            "player_client": ["android", "ios", "tv"]
         }
     },
     "http_headers": {
-        "User-Agent": (
-            "Mozilla/5.0 (Linux; Android 10; Mobile) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/90.0.4430.91 Mobile Safari/537.36"
-        ),
+        "User-Agent": "com.google.android.youtube/17.31.35 (Linux; U; Android 12; GB) gzip",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-us,en;q=0.5",
     },
 }
 
