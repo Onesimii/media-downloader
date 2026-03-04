@@ -483,6 +483,9 @@ def get_info(request: Request, url: str):
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
+            if info is None:
+                raise HTTPException(status_code=400, detail="Could not retrieve information for this URL. It might be private or restricted.")
+
             if is_spotify:
                 try:
                     meta = _get_spotify_metadata(url)
@@ -536,7 +539,13 @@ def get_formats(request: Request, url: str, user_id: str = "anonymous"):
     try:
         with YoutubeDL(BASE_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
+
+            if info is None:
+                raise HTTPException(status_code=400, detail="Could not extract format details. The video might be private or unavailable.")
+
             formats_raw = info.get("formats", [])
+            if not formats_raw:
+                raise HTTPException(status_code=400, detail="No downloadable formats found for this URL.")
             
             filtered_map = {} # height -> best_format_object
             
@@ -614,6 +623,9 @@ def get_playlist_info(request: Request, url: str):
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
+            if info is None:
+                raise HTTPException(status_code=400, detail="Failed to fetch playlist information.")
+
             entries = info.get("entries", [])
             tracks_data = []
             for e in entries:
