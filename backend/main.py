@@ -239,19 +239,9 @@ def download_file(job_id: str):
     )
 
 
-# Frontend mounting
-_frontend_candidates = [
-    BASE_DIR / "frontend",
-    BASE_DIR.parent / "frontend",
-]
-frontend_path = next((p for p in _frontend_candidates if p.is_dir()), None)
-
-if frontend_path:
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
-else:
-    @app.get("/")
-    def root():
-        return {"status": "Backend OK", "message": "Frontend not found"}
+@app.get("/")
+def root():
+    return FileResponse("frontend/index.html")
 
 if __name__ == "__main__":
     import uvicorn
