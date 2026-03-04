@@ -241,7 +241,9 @@ def download_file(job_id: str):
 
 @app.get("/")
 def root():
-    return FileResponse("frontend/index.html")
+    # Use absolute path for reliability on Railway
+    frontend_index = BASE_DIR.parent / "frontend" / "index.html"
+    return FileResponse(str(frontend_index))
 
 if __name__ == "__main__":
     import uvicorn
