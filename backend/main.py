@@ -252,3 +252,9 @@ else:
     @app.get("/")
     def root():
         return {"status": "Backend OK", "message": "Frontend not found"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # Railway sets the PORT environment variable
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=port)
