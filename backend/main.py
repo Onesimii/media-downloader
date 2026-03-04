@@ -27,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Optimized yt-dlp options for speed and reliability
+# Optimized yt-dlp options for speed and reliability, with bot detection countermeasures
 BASE_OPTS = {
     "quiet": True,
     "no_warnings": True,
@@ -35,6 +35,11 @@ BASE_OPTS = {
     "socket_timeout": 30,
     "retries": 10,
     "noplaylist": True,
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android"]
+        }
+    },
     "http_headers": {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
