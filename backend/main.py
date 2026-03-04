@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from yt_dlp import YoutubeDL
 import stripe
+import requests
 from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -107,6 +108,36 @@ def _get_or_create_user(db, user_id: str) -> User:
         db.commit()
     
     return user
+
+def _scrape_spotify_metadata(url: str) -> Dict[str, str]:
+    """Scrape Spotify track metadata from HTML (No API)."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        html = response.text
+        
+        # Try OpenGraph tags first
+        title_match = re.search(r'<meta property="og:title" content="([^"]+)">', html)
+        artist_match = re.search(r'<meta property="og:description" content="([^·]+) · [^"]+">', html)
+        
+        if not artist_match:
+            # Fallback artist detection from description
+            artist_match = re.search(r'<meta name="description" content="Listen to ([^"]+) on Spotify\.">', html)
+
+        title = title_match.group(1) if title_match else "Unknown Title"
+        artist = artist_match.group(1).strip() if artist_match else "Unknown Artist"
+        
+        # Clean up title if it contains "Song by..."
+        if " - song by " in title.lower():
+            title = title.split(" - song by ")[0]
+        
+        return {"title": title, "artist": artist}
+    except Exception as e:
+        print(f"Scraping error: {e}")
+        return {"title": "Unknown Title", "artist": "Unknown Artist"}
 
 # URL validation regex (Updated for Spotify & SoundCloud)
 URL_REGEX = re.compile(
@@ -235,14 +266,12 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
         else:
             ydl_opts["format"] = "bestvideo+bestaudio/best"
 
-        if "spotify.com/" in url:
-            # For Spotify, we need to search on YouTube
-            with YoutubeDL({**BASE_OPTS, "extract_flat": True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-                # If it's a track, info will have title and artist
-                title = info.get("title", "Unknown Title")
-                artist = info.get("uploader") or info.get("artist") or ""
-                search_query = f"ytsearch1:{artist} - {title} audio"
+        if "spotify.com/track/" in url:
+            # For Spotify, scrape metadata and search on YouTube
+            meta = _scrape_spotify_metadata(url)
+            title = meta["title"]
+            artist = meta["artist"]
+            search_query = f"ytsearch1:{artist} - {title} audio"
                 
             # Now download from YouTube search result
             with YoutubeDL(ydl_opts) as ydl:
@@ -251,6 +280,11 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
                 if "entries" in info:
                     info = info["entries"][0]
                 video_title = info.get("title", title)
+        elif "spotify.com/playlist/" in url:
+             # Handle playlist (already implemented fallback logic)
+             with YoutubeDL({**BASE_OPTS, "extract_flat": True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                video_title = info.get("title", "Spotify Playlist")
         else:
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -361,11 +395,12 @@ def get_info(request: Request, url: str):
             info = ydl.extract_info(url, download=False)
             
             if is_spotify:
+                meta = _scrape_spotify_metadata(url)
                 return {
-                    "title": info.get("title", "Unknown"),
+                    "title": meta["title"],
                     "thumbnail": info.get("thumbnail"),
                     "duration": info.get("duration"),
-                    "uploader": info.get("uploader") or info.get("artist"),
+                    "uploader": meta["artist"],
                     "filesize": 0,
                     "is_spotify": True
                 }
