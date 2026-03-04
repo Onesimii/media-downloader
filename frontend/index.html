@@ -888,8 +888,16 @@
               statusText.innerText = 'Ready!';
               statusPct.innerText = '100%';
               progressFill.style.width = '100%';
+
+              // Trigger automatic download
+              const dlUrl = job.download_url || `${API}/download-file/${job_id}`;
+              window.location.href = dlUrl;
+
+              // Refresh user status counter
+              checkUserStatus();
+
               saveBtn.style.display = 'flex';
-              saveBtn.onclick = () => { window.location.href = `${API}/download-file/${job_id}`; };
+              saveBtn.onclick = () => { window.location.href = dlUrl; };
               btn.disabled = false;
               btn.innerHTML = originalHtml;
             } else if (job.status === 'error') {

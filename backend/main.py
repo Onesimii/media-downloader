@@ -737,7 +737,13 @@ def get_progress(job_id: str):
     """Return job progress or 404."""
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    return jobs[job_id]
+    
+    job_info = jobs[job_id].copy()
+    if job_info["status"] == "ready":
+        job_info["download_url"] = f"/download-file/{job_id}"
+        job_info["status"] = "ready" # Keep status as ready for frontend logic
+    
+    return job_info
 
 
 @app.get("/download-file/{job_id}")
