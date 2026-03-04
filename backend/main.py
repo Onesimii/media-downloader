@@ -37,7 +37,7 @@ BASE_OPTS = {
     "noplaylist": True,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"]
+            "player_client": ["android", "web", "mweb"]
         }
     },
     "http_headers": {
@@ -167,7 +167,7 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
             "quiet": False,
             "outtmpl": output_template,
             "retries": 10,
-            "merge_output_format": ext or "mp4",
+            "merge_output_format": "mp4",
             "progress_hooks": [lambda d: _progress_hook(d, job_id)],
             "postprocessor_hooks": [lambda d: _postprocessor_hook(d, job_id)],
         }
@@ -182,14 +182,8 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
                 }],
             })
         elif format_id:
-            # Force container compatibility
-            if ext == "mp4":
-                audio_selector = "bestaudio[ext=m4a]/bestaudio/best"
-            elif ext == "webm":
-                audio_selector = "bestaudio[ext=webm]/bestaudio/best"
-            else:
-                audio_selector = "bestaudio/best"
-            ydl_opts["format"] = f"{format_id}+{audio_selector}/best"
+            # Merges requested video with best audio
+            ydl_opts["format"] = f"{format_id}+bestaudio/best"
         else:
             ydl_opts["format"] = "bestvideo+bestaudio/best"
 
@@ -268,22 +262,30 @@ def get_formats(request: Request, url: str):
                 width = f.get("width")
                 height = f.get("height")
                 ext = f.get("ext", "")
-                filesize = f.get("filesize") or f.get("filesize_approx")
+                vcodec = f.get("vcodec", "none")
+                acodec = f.get("acodec", "none")
                 
                 # 1. Basic filtering
                 if not width or not height: continue
                 if height < 360: continue # Only >= 360p
-                if not filesize: continue # Exclude unknown size
                 if ext == "mhtml": continue # Exclude mhtml
                 
-                # 2. Duplicate resolution handling (Prefer MP4)
+                # 2. Identify if it's a video stream (combined or video-only)
+                if vcodec == "none": continue
+                
+                # 2. Duplicate resolution handling (Prefer MP4 if available)
                 current_best = filtered_map.get(height)
                 if not current_best:
                     filtered_map[height] = f
                 else:
-                    # If this is mp4 and previous wasn't, or if previous was mhtml? (already filtered)
-                    # Simple rule: if new one is mp4, replace older non-mp4
-                    if ext == "mp4" and current_best.get("ext") != "mp4":
+                    # Preference: Combined MP4 > Combined > Video-only MP4 > Video-only
+                    def get_score(fmt):
+                        score = 0
+                        if fmt.get("acodec") != "none": score += 10
+                        if fmt.get("ext") == "mp4": score += 5
+                        return score
+                    
+                    if get_score(f) > get_score(current_best):
                         filtered_map[height] = f
 
             # 3. Format the results
@@ -294,10 +296,14 @@ def get_formats(request: Request, url: str):
                 if height >= 2160: res_val += " (4K)"
                 elif height >= 1440: res_val += " (2K)"
                 
+                # Check if it needs merging (video-only)
+                is_video_only = f.get("acodec") == "none"
+                info_suffix = " (Needs Merging)" if is_video_only else ""
+                
                 final_formats.append({
                     "format_id": f["format_id"],
-                    "ext": f.get("ext"),
-                    "resolution": f"{width}x{height} ({res_val})",
+                    "ext": "mp4" if is_video_only else f.get("ext"),
+                    "resolution": f"{width}x{height} ({res_val}){info_suffix}",
                     "filesize": f.get("filesize") or f.get("filesize_approx"),
                     "height": height,
                 })
