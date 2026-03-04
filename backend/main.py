@@ -42,9 +42,9 @@ BASE_OPTS = {
     },
     "http_headers": {
         "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "Mozilla/5.0 (Linux; Android 10; Mobile) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
+            "Chrome/90.0.4430.91 Mobile Safari/537.36"
         ),
     },
 }
