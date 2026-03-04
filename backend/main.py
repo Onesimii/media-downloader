@@ -51,9 +51,13 @@ RATE_LIMIT_WINDOW_SEC = 60
 jobs: Dict[str, Dict[str, Any]] = {}
 rate_limit_store: Dict[str, List[float]] = {}
 
-# URL validation regex
+import zipfile
+import tempfile
+import shutil
+
+# URL validation regex (Updated for Spotify)
 URL_REGEX = re.compile(
-    r'^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com)/.+$'
+    r'^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|open\.spotify\.com)/.+$'
 )
 
 def _is_rate_limited(ip: str) -> bool:
@@ -114,7 +118,7 @@ def _find_downloaded_file(file_id: str) -> str:
         raise FileNotFoundError(f"No downloaded file found for id {file_id}")
     
     # Priority for choosing the best file if multiple exist (e.g., source + merged)
-    priority = [".mp4", ".webm", ".mkv", ".m4a", ".mp3", ".opus"]
+    priority = [".mp4", ".webm", ".mkv", ".m4a", ".mp3", ".opus", ".zip"]
     matches.sort(key=lambda p: next(
         (i for i, ext in enumerate(priority) if p.endswith(ext)), 999
     ))
@@ -200,6 +204,76 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
             "error": str(e)
         })
 
+def _playlist_download_task(job_id: str, playlist_name: str, tracks: List[str]):
+    """Background task to download multiple tracks and ZIP them."""
+    try:
+        temp_dir = Path(tempfile.mkdtemp(dir=DOWNLOAD_DIR))
+        track_files = []
+        total = len(tracks)
+
+        for i, track_name in enumerate(tracks):
+            jobs[job_id]["status"] = "downloading"
+            jobs[job_id]["progress"] = (i / total) * 90
+            jobs[job_id]["progress_text"] = f"Track {i+1} of {total}: {track_name}"
+
+            track_id = str(uuid.uuid4())
+            track_template = str(temp_dir / f"{track_id}.%(ext)s")
+
+            ydl_opts = {
+                **BASE_OPTS,
+                "outtmpl": track_template,
+                "format": "bestaudio/best",
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            }
+
+            # Search on YouTube
+            search_query = f"ytsearch1:{track_name}"
+            try:
+                with YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([search_query])
+                
+                # Find the created MP3
+                downloaded = glob.glob(str(temp_dir / f"{track_id}.mp3"))
+                if downloaded:
+                    # Rename to something readable for the ZIP
+                    safe_name = "".join(c for c in track_name if c.isalnum() or c in " -_()").strip()
+                    final_path = temp_dir / f"{safe_name[:60]}.mp3"
+                    os.rename(downloaded[0], final_path)
+                    track_files.append(final_path)
+            except Exception as e:
+                print(f"Error downloading track {track_name}: {e}")
+
+        # ZIP it up
+        jobs[job_id]["status"] = "zipping"
+        jobs[job_id]["progress"] = 95
+        
+        file_id = str(uuid.uuid4())
+        zip_path = DOWNLOAD_DIR / f"{file_id}.zip"
+        
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for f in track_files:
+                zipf.write(f, arcname=f.name)
+
+        # Cleanup temp dir
+        shutil.rmtree(temp_dir)
+
+        jobs[job_id].update({
+            "status": "ready",
+            "progress": 100,
+            "filepath": str(zip_path),
+            "filename": f"{playlist_name}.zip"
+        })
+
+    except Exception as e:
+        jobs[job_id].update({
+            "status": "error",
+            "error": str(e)
+        })
+
 
 @app.get("/info")
 def get_info(request: Request, url: str):
@@ -241,6 +315,10 @@ def get_formats(request: Request, url: str):
 
     if not URL_REGEX.match(url):
         raise HTTPException(status_code=400, detail="Invalid video URL.")
+
+    # Prevent formats endpoint from hanging on Spotify playlists
+    if "spotify.com/playlist/" in url:
+        return {"title": "Spotify Playlist", "formats": [], "is_spotify": True}
 
     try:
         with YoutubeDL(BASE_OPTS) as ydl:
@@ -309,6 +387,59 @@ def get_formats(request: Request, url: str):
             }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching formats: {str(e)}")
+
+@app.get("/playlist-info")
+def get_playlist_info(request: Request, url: str):
+    """Extract tracks from a Spotify playlist using yt-dlp flat-playlist."""
+    if _is_rate_limited(request.client.host):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
+    try:
+        # We use extract_flat to avoid DRM stream errors and just get metadata
+        opts = {**BASE_OPTS, "extract_flat": "in_playlist", "playlist_items": "1-30"}
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            entries = info.get("entries", [])
+            tracks_data = []
+            for e in entries:
+                tracks_data.append({
+                    "title": e.get("title", "Unknown Track"),
+                    "artist": e.get("uploader", "Unknown Artist"),
+                    "selected": True
+                })
+            
+            return {
+                "title": info.get("title", "Spotify Playlist"),
+                "thumbnail": info.get("thumbnails")[0]["url"] if info.get("thumbnails") else None,
+                "tracks": tracks_data
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch playlist: {str(e)}")
+
+@app.post("/start-playlist-download")
+def start_playlist_download(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    playlist_name: str = Body(..., embed=True),
+    tracks: List[str] = Body(..., embed=True)
+):
+    """Start batch download and zipping."""
+    if _is_rate_limited(request.client.host):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    if len(tracks) > 30:
+        raise HTTPException(status_code=400, detail="Limit 30 tracks per request")
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "status": "preparing",
+        "progress": 0,
+        "created_at": time.time()
+    }
+    
+    background_tasks.add_task(_playlist_download_task, job_id, playlist_name, tracks)
+    return {"job_id": job_id}
 
 
 @app.post("/start-download")
@@ -388,9 +519,11 @@ def root():
     
     raise HTTPException(status_code=404, detail="frontend/index.html not found")
 
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(_cleanup_task())
+
 
 if __name__ == "__main__":
     import uvicorn
