@@ -643,6 +643,13 @@
       result.innerHTML = '';
 
       try {
+        // Detect Spotify Playlist and redirect
+        if (url.includes('spotify.com/playlist/')) {
+          const path = window.location.pathname.replace('index.html', '');
+          window.location.href = `${path}playlist.html?url=${encodeURIComponent(url)}`;
+          return;
+        }
+
         const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}`);
         const data = await res.json();
 
