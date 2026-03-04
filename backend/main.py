@@ -127,12 +127,20 @@ def _scrape_spotify_metadata(url: str) -> Dict[str, str]:
             # Fallback artist detection from description
             artist_match = re.search(r'<meta name="description" content="Listen to ([^"]+) on Spotify\.">', html)
 
-        title = title_match.group(1) if title_match else "Unknown Title"
-        artist = artist_match.group(1).strip() if artist_match else "Unknown Artist"
+        title = title_match.group(1) if title_match else ""
+        artist = artist_match.group(1).strip() if artist_match else ""
         
-        # Clean up title if it contains "Song by..."
+        # Refined cleanup
+        if "Song by " in artist:
+            artist = artist.replace("Song by ", "").strip()
+        
+        # Clean title (remove "Song by..." and common suffixes)
         if " - song by " in title.lower():
             title = title.split(" - song by ")[0]
+        
+        # If still empty or generic, use defaults
+        title = title or "Unknown Title"
+        artist = artist or "Unknown Artist"
         
         return {"title": title, "artist": artist}
     except Exception as e:
@@ -271,7 +279,8 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
             meta = _scrape_spotify_metadata(url)
             title = meta["title"]
             artist = meta["artist"]
-            search_query = f"ytsearch1:{artist} - {title} audio"
+            # Refined search query for better accuracy
+            search_query = f"ytsearch1:{artist} - {title} official audio"
                 
             # Now download from YouTube search result
             with YoutubeDL(ydl_opts) as ydl:
@@ -279,7 +288,17 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
                 # The actual info is inside the first search result
                 if "entries" in info:
                     info = info["entries"][0]
-                video_title = info.get("title", title)
+                
+                # After download, rename to a clean filename: "Artist - Title.mp3"
+                temp_filepath = _find_downloaded_file(file_id)
+                final_filename = f"{artist} - {title}.mp3".replace("/", "_") # Sanitize
+                final_filepath = DOWNLOAD_DIR / final_filename
+                
+                if os.path.exists(temp_filepath):
+                    os.rename(temp_filepath, final_filepath)
+                
+                jobs[job_id]["filepath"] = str(final_filepath)
+                video_title = f"{artist} - {title}"
         elif "spotify.com/playlist/" in url:
              # Handle playlist (already implemented fallback logic)
              with YoutubeDL({**BASE_OPTS, "extract_flat": True}) as ydl:
