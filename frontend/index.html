@@ -673,6 +673,8 @@
   <script>
     const API = ""; // API is served from the same origin
     let currentMode = 'video';
+    let lastFetchedData = null;
+    let lastFetchedUrl = "";
 
     function setMode(mode) {
       if (currentMode === mode) return;
@@ -703,6 +705,57 @@
         videoBadges.classList.remove('hidden');
         urlInput.placeholder = "Paste video URL here…";
       }
+
+      // Re-render data if we have it
+      if (lastFetchedData) {
+        renderData(lastFetchedData, lastFetchedUrl);
+      }
+    }
+
+    function renderData(data, url) {
+      const result = document.getElementById('result');
+
+      const thumb = data.thumbnail
+        ? `<img class="thumb" src="${data.thumbnail}" alt="thumbnail" onerror="this.style.display='none'" />`
+        : `<div class="thumb-placeholder">🎬</div>`;
+
+      const duration = data.duration ? `<div class="duration">⏱ ${fmtDuration(data.duration)}</div>` : '';
+
+      let formatsHtml = '';
+      const showVideoFormats = currentMode === 'video';
+
+      if (showVideoFormats && data.formats && data.formats.length > 0) {
+        formatsHtml = data.formats.map(f => {
+          const fmtSize = f.filesize
+            ? (f.filesize / 1024 / 1024).toFixed(1) + " MB"
+            : "unknown size";
+          return `
+          <div class="fmt-row">
+            <div>
+              <div class="fmt-res">${f.resolution}</div>
+              <div class="fmt-info">${f.ext.toUpperCase()} · ${fmtSize}</div>
+            </div>
+            <button class="btn btn-dl" onclick="downloadFile('${url}', '${f.format_id}', '${f.ext}', false, this)">⬇ Download</button>
+          </div>`;
+        }).join('');
+      }
+
+      const formatsLabel = (showVideoFormats && formatsHtml) ? `<div class="formats-label">Available Formats</div>` : '';
+      const formatsGrid = (showVideoFormats && formatsHtml) ? `<div class="formats-grid">${formatsHtml}</div>` : '';
+      const divider = showVideoFormats ? `<hr class="divider"/>` : '';
+
+      result.innerHTML = `
+      <div class="video-info">
+        ${thumb}
+        <div class="video-meta">
+          <h2>${data.title}</h2>
+          ${duration}
+        </div>
+      </div>
+      ${formatsLabel}
+      ${formatsGrid}
+      ${divider}
+      <button class="btn btn-audio" onclick="downloadFile('${url}', null, 'mp3', true, this)">🎵 Download Audio Only (MP3)</button>`;
     }
 
     function fmtDuration(sec) {
@@ -793,47 +846,15 @@
 
         const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}`);
         const data = await res.json();
+        lastFetchedData = data;
+        lastFetchedUrl = url;
 
         if (!res.ok) {
           result.innerHTML = `<div class="error-box">❌ ${data.detail || 'Unknown error'}</div>`;
           return;
         }
 
-        const thumb = data.thumbnail
-          ? `<img class="thumb" src="${data.thumbnail}" alt="thumbnail" onerror="this.style.display='none'" />`
-          : `<div class="thumb-placeholder">🎬</div>`;
-
-        const duration = data.duration ? `<div class="duration">⏱ ${fmtDuration(data.duration)}</div>` : '';
-
-        let formatsHtml = '';
-        if (data.formats && data.formats.length > 0) {
-          formatsHtml = data.formats.map(f => {
-            const fmtSize = f.filesize
-              ? (f.filesize / 1024 / 1024).toFixed(1) + " MB"
-              : "unknown size";
-            return `
-            <div class="fmt-row">
-              <div>
-                <div class="fmt-res">${f.resolution}</div>
-                <div class="fmt-info">${f.ext.toUpperCase()} · ${fmtSize}</div>
-              </div>
-              <button class="btn btn-dl" onclick="downloadFile('${url}', '${f.format_id}', '${f.ext}', false, this)">⬇ Download</button>
-            </div>`;
-          }).join('');
-        }
-
-        result.innerHTML = `
-        <div class="video-info">
-          ${thumb}
-          <div class="video-meta">
-            <h2>${data.title}</h2>
-            ${duration}
-          </div>
-        </div>
-        <div class="formats-label">Available Formats</div>
-        <div class="formats-grid">${formatsHtml}</div>
-        <hr class="divider"/>
-        <button class="btn btn-audio" onclick="downloadFile('${url}', null, 'mp3', true, this)">🎵 Download Audio Only (MP3)</button>`;
+        renderData(data, url);
 
       } catch (err) {
         result.innerHTML = `<div class="error-box">❌ Error: ${err.message}</div>`;
