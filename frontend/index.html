@@ -40,9 +40,21 @@
       flex-direction: column;
       align-items: center;
       padding: 40px 20px 80px;
-      background-image:
-        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 110, 245, 0.25) 0%, transparent 70%),
-        radial-gradient(ellipse 60% 40% at 80% 80%, rgba(233, 107, 255, 0.12) 0%, transparent 60%);
+
+      background-image:Fix my FastAPI backend that uses yt-dlp to fetch YouTube video formats. Problem: When users paste a YouTube link,
+      yt-dlp returns the error: "Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies" . Update the yt-dlp configuration to reduce YouTube bot detection. Requirements: 1. Update yt-dlp options to mimic a real client. 2. Use the YouTube Android player client in extractor_args. 3. Enable quiet mode and ignore certificate issues. 4. Ensure the code still returns available formats correctly. 5. Handle errors safely so the server does not crash. Example configuration expected: ydl_opts= {
+
+        "quiet": True,
+        "nocheckcertificate": True,
+        "extractor_args": {
+          "youtube": {
+            "player_client": ["android"]
+          }
+        }
+      }
+
+      Provide the corrected Python code for the FastAPI function that fetches video formats using yt-dlp. radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 110, 245, 0.25) 0%, transparent 70%),
+      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(233, 107, 255, 0.12) 0%, transparent 60%);
     }
 
     header {
@@ -83,6 +95,18 @@
       font-size: 0.75rem;
       font-weight: 600;
       letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      user-select: none;
+    }
+
+    .badge:hover {
+      transform: scale(1.08);
+      filter: brightness(1.1);
+    }
+
+    .badge:active {
+      transform: scale(0.94);
     }
 
     .badge.yt {
@@ -91,16 +115,34 @@
       border: 1px solid rgba(255, 0, 0, 0.25);
     }
 
+    .badge.yt:hover {
+      box-shadow: 0 0 15px rgba(255, 0, 0, 0.4);
+      background: rgba(255, 0, 0, 0.22);
+      border-color: rgba(255, 0, 0, 0.4);
+    }
+
     .badge.tt {
       background: rgba(0, 242, 234, 0.1);
       color: #00f2ea;
       border: 1px solid rgba(0, 242, 234, 0.2);
     }
 
+    .badge.tt:hover {
+      box-shadow: 0 0 15px rgba(0, 242, 234, 0.35);
+      background: rgba(0, 242, 234, 0.18);
+      border-color: rgba(0, 242, 234, 0.4);
+    }
+
     .badge.ig {
       background: rgba(233, 107, 255, 0.12);
       color: #e96bff;
       border: 1px solid rgba(233, 107, 255, 0.25);
+    }
+
+    .badge.ig:hover {
+      box-shadow: 0 0 15px rgba(233, 107, 255, 0.4);
+      background: rgba(233, 107, 255, 0.2);
+      border-color: rgba(233, 107, 255, 0.4);
     }
 
     .card {
