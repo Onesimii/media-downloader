@@ -23,11 +23,16 @@ import datetime
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_URL = f"sqlite:///{BASE_DIR}/downloader.db"
 
-# Stripe Setup (Replace with your keys)
+# Stripe Setup
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "sk_test_51P...")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_...")
 PRO_PLAN_PRICE_ID = os.environ.get("PRO_PLAN_PRICE_ID", "price_...")
 stripe.api_key = STRIPE_SECRET_KEY
+
+# Spotify API Setup (Optional)
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET")
+_spotify_token: Dict[str, Any] = {"token": None, "expires_at": 0}
 
 # Database Setup
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -118,29 +123,66 @@ def _get_or_create_user(db, user_id: str) -> User:
     
     return user
 
+def _get_spotify_access_token() -> Optional[str]:
+    """Get temporary Spotify API token using Client Credentials flow."""
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+        return None
+    
+    now = time.time()
+    if _spotify_token["token"] and now < _spotify_token["expires_at"]:
+        return _spotify_token["token"]
+        
+    try:
+        url = "https://accounts.spotify.com/api/token"
+        data = {"grant_type": "client_credentials"}
+        response = requests.post(
+            url, 
+            auth=(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET), 
+            data=data, 
+            timeout=10
+        )
+        response.raise_for_status()
+        res_data = response.json()
+        _spotify_token["token"] = res_data["access_token"]
+        _spotify_token["expires_at"] = now + res_data["expires_in"] - 60
+        return _spotify_token["token"]
+    except Exception as e:
+        print(f"Spotify token error: {e}")
+        return None
+
 def _get_spotify_metadata(url: str) -> Dict[str, str]:
-    """Extract metadata from Spotify Embed endpoint (token-less)."""
+    """Extract metadata from Spotify API or Embed endpoint."""
     try:
         # Extract track ID
-        # URLs: https://open.spotify.com/track/ID?si=... or https://open.spotify.com/track/ID
         track_id_match = re.search(r'track/([a-zA-Z0-9]+)', url)
         if not track_id_match:
             raise ValueError("Invalid Spotify track URL")
-        
         track_id = track_id_match.group(1)
+
+        token = _get_spotify_access_token()
+        if token:
+            # Use official API
+            api_url = f"https://api.spotify.com/v1/tracks/{track_id}"
+            headers = {"Authorization": f"Bearer {token}"}
+            response = requests.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "title": data.get("name"),
+                    "artist": data.get("artists", [{}])[0].get("name"),
+                    "thumbnail": data.get("album", {}).get("images", [{}])[0].get("url")
+                }
+
+        # Fallback to Embed endpoint (token-less)
         embed_url = f"https://open.spotify.com/embed/track/{track_id}"
-        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        
         response = requests.get(embed_url, headers=headers, timeout=10)
         response.raise_for_status()
-        
-        # The metadata is in a JSON blob inside a <script id="initial-state"> or similar
-        # For simplicity and reliability, we can also use the OG tags from the embed page
         html = response.text
         
+        # OG tags or state data
         title_match = re.search(r'<meta property="og:title" content="([^"]+)">', html)
         artist_match = re.search(r'<meta property="og:description" content="([^·]+) · [^"]+">', html)
         thumb_match = re.search(r'<meta property="og:image" content="([^"]+)">', html)
@@ -149,12 +191,12 @@ def _get_spotify_metadata(url: str) -> Dict[str, str]:
         artist = artist_match.group(1).strip() if artist_match else ""
         thumbnail = thumb_match.group(1) if thumb_match else ""
 
-        # Clean title if it contains "song by" (fallback)
+        # Cleanup generic suffixes
         if " - song by " in title.lower():
             title = title.split(" - song by ")[0]
             
         if not title or not artist:
-            # Try alternate parsing of script data if OG tags fail
+            # Final attempts at parsing script id="resource"
             state_match = re.search(r'<script id="resource" type="application/json">([^<]+)</script>', html)
             if state_match:
                 data = json.loads(state_match.group(1))
@@ -165,11 +207,7 @@ def _get_spotify_metadata(url: str) -> Dict[str, str]:
         if not title or not artist:
             raise ValueError("Metadata not found in Spotify page")
 
-        return {
-            "title": title,
-            "artist": artist,
-            "thumbnail": thumbnail
-        }
+        return {"title": title, "artist": artist, "thumbnail": thumbnail}
     except Exception as e:
         print(f"Spotify metadata fetch error: {e}")
         raise e
