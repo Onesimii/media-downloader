@@ -13,8 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from yt_dlp import YoutubeDL
 import stripe
 from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine
 import datetime
 
@@ -45,7 +44,16 @@ Base.metadata.create_all(bind=engine)
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-app = FastAPI(title="Media Downloader API")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Create background cleanup task
+    asyncio.create_task(_cleanup_task())
+    yield
+    # Shutdown logic (if any) could go here
+
+app = FastAPI(title="Media Downloader API", lifespan=lifespan)
 
 # CORS setup
 app.add_middleware(
@@ -237,13 +245,18 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
 
         if "spotify.com/track/" in url:
             # For Spotify, use yt-dlp to extract metadata accurately
-            with YoutubeDL({**BASE_OPTS, "extract_flat": True}) as ydl:
+            # We use ignoreerrors=True to bypass the DRM warning/error and just get metadata if possible
+            spotify_opts = {**BASE_OPTS, "extract_flat": True, "ignoreerrors": True}
+            with YoutubeDL(spotify_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                if not info:
+                    raise Exception("yt-dlp could not extract info from Spotify track (possibly DRM or restricted).")
+                
                 title = info.get("track") or info.get("title")
                 artist = info.get("artist") or info.get("uploader")
                 
                 if not title or not artist:
-                    raise Exception("Could not extract Spotify metadata")
+                    raise Exception("Could not extract Track Title or Artist from Spotify metadata")
 
             # Refined search query for better accuracy
             search_query = f"ytsearch1:{artist} - {title} official audio"
@@ -379,6 +392,13 @@ def get_info(request: Request, url: str):
             info = ydl.extract_info(url, download=False)
             
             if is_spotify:
+                spotify_opts = {**BASE_OPTS, "extract_flat": True, "ignoreerrors": True}
+                with YoutubeDL(spotify_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                
+                if not info:
+                    raise HTTPException(status_code=400, detail="Could not extract metadata from Spotify track URL (DRM or restricted).")
+
                 title = info.get("track") or info.get("title")
                 artist = info.get("artist") or info.get("uploader")
                 
@@ -710,9 +730,7 @@ def root():
     raise HTTPException(status_code=404, detail="frontend/index.html not found")
 
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(_cleanup_task())
+# The startup event is now handled by the lifespan context manager above
 
 
 if __name__ == "__main__":
