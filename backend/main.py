@@ -241,9 +241,17 @@ def download_file(job_id: str):
 
 @app.get("/")
 def root():
-    # Use absolute path for reliability on Railway
-    frontend_index = BASE_DIR.parent / "frontend" / "index.html"
-    return FileResponse(str(frontend_index))
+    # Robust path discovery for Railway (both Docker and Nixpacks)
+    candidates = [
+        BASE_DIR.parent / "frontend" / "index.html",  # Standard layout
+        BASE_DIR / "frontend" / "index.html",         # Docker layout
+        Path("frontend/index.html").absolute(),        # Direct reference
+    ]
+    for path in candidates:
+        if path.is_file():
+            return FileResponse(str(path))
+    
+    raise HTTPException(status_code=404, detail="frontend/index.html not found")
 
 if __name__ == "__main__":
     import uvicorn

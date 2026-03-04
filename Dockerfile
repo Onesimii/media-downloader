@@ -12,10 +12,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend source
 COPY backend/ .
 
-# Copy frontend so FastAPI StaticFiles can serve it
+# Copy frontend so FastAPI can serve it
 COPY frontend/ ./frontend/
 
 # Create downloads directory
 RUN mkdir -p downloads
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application via Python to correctly handle the PORT environment variable
+CMD ["python", "main.py"]
