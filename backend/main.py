@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from yt_dlp import YoutubeDL
 import stripe
-from sqlalchemy import create_all, Column, String, Boolean, Integer, Float, DateTime
+from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
