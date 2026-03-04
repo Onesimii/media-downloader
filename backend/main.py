@@ -37,7 +37,7 @@ BASE_OPTS = {
     "noplaylist": True,
     "extractor_args": {
         "youtube": {
-            "player_client": ["android"]
+            "player_client": ["android", "web"]
         }
     },
     "http_headers": {
