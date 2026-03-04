@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Media Downloader – YouTube, TikTok & Instagram</title>
+  <meta name="description"
+    content="Download videos from YouTube, TikTok and Instagram in any format or as MP3 audio." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #0d0f1a;
+      --surface: rgba(255, 255, 255, 0.04);
+      --border: rgba(255, 255, 255, 0.10);
+      --accent: #7c6ef5;
+      --accent2: #e96bff;
+      --text: #e8eaf0;
+      --muted: #9096ac;
+      --success: #3dd68c;
+      --danger: #f87171;
+      --radius: 16px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 80px;
+      background-image:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 110, 245, 0.25) 0%, transparent 70%),
+        radial-gradient(ellipse 60% 40% at 80% 80%, rgba(233, 107, 255, 0.12) 0%, transparent 60%);
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    header .logo {
+      font-size: 2.8rem;
+      margin-bottom: 8px;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fff 0%, #c4b5fd 50%, #e96bff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      color: var(--muted);
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 14px;
+    }
+
+    .badge {
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .badge.yt {
+      background: rgba(255, 0, 0, 0.15);
+      color: #ff7070;
+      border: 1px solid rgba(255, 0, 0, 0.25);
+    }
+
+    .badge.tt {
+      background: rgba(0, 242, 234, 0.1);
+      color: #00f2ea;
+      border: 1px solid rgba(0, 242, 234, 0.2);
+    }
+
+    .badge.ig {
+      background: rgba(233, 107, 255, 0.12);
+      color: #e96bff;
+      border: 1px solid rgba(233, 107, 255, 0.25);
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 28px;
+      width: 100%;
+      max-width: 640px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    #url-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 16px;
+      color: var(--text);
+      font-size: 0.95rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #url-input:focus {
+      border-color: var(--accent);
+    }
+
+    #url-input::placeholder {
+      color: var(--muted);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: opacity 0.2s, transform 0.15s;
+    }
+
+    .btn:hover:not(:disabled) {
+      opacity: 0.88;
+      transform: translateY(-1px);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+    }
+
+    .btn-dl {
+      background: rgba(124, 110, 245, 0.18);
+      border: 1px solid rgba(124, 110, 245, 0.35);
+      color: #c4b5fd;
+      font-size: 0.8rem;
+      padding: 7px 14px;
+      border-radius: 8px;
+    }
+
+    .btn-audio {
+      background: rgba(61, 214, 140, 0.15);
+      border: 1px solid rgba(61, 214, 140, 0.3);
+      color: var(--success);
+      font-size: 0.85rem;
+      padding: 10px 18px;
+      border-radius: 8px;
+      width: 100%;
+      justify-content: center;
+      margin-top: 16px;
+    }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #result {
+      margin-top: 24px;
+    }
+
+    .video-info {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      align-items: flex-start;
+    }
+
+    .thumb {
+      width: 120px;
+      height: 68px;
+      object-fit: cover;
+      border-radius: 8px;
+      flex-shrink: 0;
+      background: #1a1d2e;
+    }
+
+    .thumb-placeholder {
+      width: 120px;
+      height: 68px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #1a1226, #1a1d2e);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.8rem;
+    }
+
+    .video-meta h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.4;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .video-meta .duration {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .formats-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .formats-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 320px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .formats-grid::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .formats-grid::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .formats-grid::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    .fmt-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      transition: background 0.15s;
+    }
+
+    .fmt-row:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .fmt-res {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .fmt-info {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 18px 0;
+    }
+
+    .error-box {
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      border-radius: 10px;
+      padding: 14px 16px;
+      color: var(--danger);
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+
+    .dl-link {
+      text-decoration: none;
+    }
+
+    footer {
+      margin-top: 48px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+
+    /* New styles for progress tracking */
+    .progress-card {
+      margin-top: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: none;
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .progress-status {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: capitalize;
+    }
+
+    .progress-pct {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 99px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width 0.3s ease;
+    }
+
+    .btn-ready {
+      background: var(--success) !important;
+      color: #000 !important;
+      width: 100%;
+      justify-content: center;
+      margin-top: 12px;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <div class="logo">⬇️</div>
+    <h1>Media Downloader</h1>
+    <p>Download videos and audio in seconds</p>
+    <div class="badge-row">
+      <span class="badge yt">YouTube</span>
+      <span class="badge tt">TikTok</span>
+      <span class="badge ig">Instagram</span>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="input-row">
+      <input type="text" id="url-input" placeholder="Paste video URL here…" autocomplete="off" />
+      <button class="btn btn-primary" id="fetch-btn" onclick="fetchFormats()">
+        <span>Fetch</span>
+      </button>
+    </div>
+    <!-- Progress display -->
+    <div id="progress-container" class="progress-card">
+      <div class="progress-header">
+        <div id="status-text" class="progress-status">Preparing...</div>
+        <div id="status-pct" class="progress-pct">0%</div>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="progress-fill" class="progress-bar-fill"></div>
+      </div>
+      <button id="save-btn" class="btn btn-ready">✅ Save File</button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <footer>Media Downloader — for personal use only. Respect copyright laws.</footer>
+
+  <script>
+    const API = ""; // API is served from the same origin
+
+    function fmtDuration(sec) {
+      if (!sec) return "";
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    async function downloadFile(url, format_id, ext, audio_only, btn) {
+      if (btn.disabled) return;
+
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div><span>Requesting...</span>';
+
+      const progressContainer = document.getElementById('progress-container');
+      const statusText = document.getElementById('status-text');
+      const statusPct = document.getElementById('status-pct');
+      const progressFill = document.getElementById('progress-fill');
+      const saveBtn = document.getElementById('save-btn');
+
+      try {
+        const res = await fetch(`${API}/start-download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, format_id, ext, audio_only })
+        });
+        const { job_id } = await res.json();
+
+        progressContainer.style.display = 'block';
+        saveBtn.style.display = 'none';
+
+        const poll = setInterval(async () => {
+          try {
+            const pRes = await fetch(`${API}/progress/${job_id}`);
+            const job = await pRes.json();
+
+            if (job.status === 'ready') {
+              clearInterval(poll);
+              statusText.innerText = 'Ready!';
+              statusPct.innerText = '100%';
+              progressFill.style.width = '100%';
+              saveBtn.style.display = 'flex';
+              saveBtn.onclick = () => { window.location.href = `${API}/download-file/${job_id}`; };
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+            } else if (job.status === 'error') {
+              clearInterval(poll);
+              statusText.innerText = 'Error';
+              alert('Download failed: ' + job.error);
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+            } else {
+              statusText.innerText = job.status + '...';
+              statusPct.innerText = Math.round(job.progress) + '%';
+              progressFill.style.width = job.progress + '%';
+            }
+          } catch (e) { console.error('Polling error', e); }
+        }, 1000);
+      } catch (err) {
+        alert('Could not start download');
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+
+    async function fetchFormats() {
+      const url = document.getElementById('url-input').value.trim();
+      if (!url) {
+        alert("Please enter a URL!");
+        return;
+      }
+
+      const btn = document.getElementById('fetch-btn');
+      const result = document.getElementById('result');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div>';
+      result.innerHTML = '';
+
+      try {
+        const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          result.innerHTML = `<div class="error-box">❌ ${data.detail || 'Unknown error'}</div>`;
+          return;
+        }
+
+        const thumb = data.thumbnail
+          ? `<img class="thumb" src="${data.thumbnail}" alt="thumbnail" onerror="this.style.display='none'" />`
+          : `<div class="thumb-placeholder">🎬</div>`;
+
+        const duration = data.duration ? `<div class="duration">⏱ ${fmtDuration(data.duration)}</div>` : '';
+
+        let formatsHtml = '';
+        if (data.formats && data.formats.length > 0) {
+          formatsHtml = data.formats.map(f => {
+            const fmtSize = f.filesize
+              ? (f.filesize / 1024 / 1024).toFixed(1) + " MB"
+              : "unknown size";
+            return `
+            <div class="fmt-row">
+              <div>
+                <div class="fmt-res">${f.resolution}</div>
+                <div class="fmt-info">${f.ext.toUpperCase()} · ${fmtSize}</div>
+              </div>
+              <button class="btn btn-dl" onclick="downloadFile('${url}', '${f.format_id}', '${f.ext}', false, this)">⬇ Download</button>
+            </div>`;
+          }).join('');
+        }
+
+        result.innerHTML = `
+        <div class="video-info">
+          ${thumb}
+          <div class="video-meta">
+            <h2>${data.title}</h2>
+            ${duration}
+          </div>
+        </div>
+        <div class="formats-label">Available Formats</div>
+        <div class="formats-grid">${formatsHtml}</div>
+        <hr class="divider"/>
+        <button class="btn btn-audio" onclick="downloadFile('${url}', null, 'mp3', true, this)">🎵 Download Audio Only (MP3)</button>`;
+
+      } catch (err) {
+        result.innerHTML = `<div class="error-box">❌ Error: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>Fetch</span>';
+      }
+    }
+
+    document.getElementById('url-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') fetchFormats();
+    });
+  </script>
+
+</body>
+
+</html>
