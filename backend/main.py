@@ -1,10 +1,12 @@
 import os
 import uuid
 import glob
+import time
+import asyncio
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -42,8 +44,71 @@ BASE_OPTS = {
     },
 }
 
-# In-memory store for jobs
+# Configuration constants
+MAX_FILE_SIZE_MB = 800
+CLEANUP_INTERVAL_SEC = 60
+FILE_EXPIRY_SEC = 20 * 60  # 20 minutes
+RATE_LIMIT_REQUESTS = 5
+RATE_LIMIT_WINDOW_SEC = 60
+
+# In-memory stores
 jobs: Dict[str, Dict[str, Any]] = {}
+rate_limit_store: Dict[str, List[float]] = {}
+
+# URL validation regex
+URL_REGEX = re.compile(
+    r'^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com)/.+$'
+)
+
+def _is_rate_limited(ip: str) -> bool:
+    """Simple sliding window rate limiter."""
+    now = time.time()
+    if ip not in rate_limit_store:
+        rate_limit_store[ip] = []
+    
+    # Filter out old requests
+    rate_limit_store[ip] = [t for t in rate_limit_store[ip] if now - t < RATE_LIMIT_WINDOW_SEC]
+    
+    if len(rate_limit_store[ip]) >= RATE_LIMIT_REQUESTS:
+        return True
+    
+    rate_limit_store[ip].append(now)
+    return False
+
+async def _cleanup_task():
+    """Background task to delete old files and stale jobs."""
+    while True:
+        try:
+            now = time.time()
+            # 1. Cleanup jobs and files
+            to_delete_jobs = []
+            for job_id, job in jobs.items():
+                created_at = job.get("created_at", 0)
+                if created_at > 0 and now - created_at > FILE_EXPIRY_SEC:
+                    # Delete actual file if it exists
+                    filepath = job.get("filepath")
+                    if filepath and os.path.exists(filepath):
+                        try:
+                            os.remove(filepath)
+                        except Exception:
+                            pass
+                    to_delete_jobs.append(job_id)
+            
+            for job_id in to_delete_jobs:
+                if job_id in jobs:
+                    del jobs[job_id]
+
+            # 2. Cleanup orphaned files in DOWNLOAD_DIR
+            for f in glob.glob(str(DOWNLOAD_DIR / "*")):
+                if now - os.path.getmtime(f) > FILE_EXPIRY_SEC:
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+                        
+        except Exception:
+            pass
+        await asyncio.sleep(CLEANUP_INTERVAL_SEC)
 
 
 def _find_downloaded_file(file_id: str) -> str:
@@ -147,25 +212,46 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
 
 
 @app.get("/info")
-def get_info(url: str):
+def get_info(request: Request, url: str):
     """Return basic video info (title, thumbnail, duration)."""
+    if _is_rate_limited(request.client.host):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
+
+    if not URL_REGEX.match(url):
+        raise HTTPException(status_code=400, detail="Invalid video URL.")
+
     try:
         opts = {**BASE_OPTS, "extract_flat": False}
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            
+            # Size check
+            filesize = info.get("filesize") or info.get("filesize_approx") or 0
+            if filesize > MAX_FILE_SIZE_MB * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"File exceeds limit ({MAX_FILE_SIZE_MB}MB).")
+
             return {
                 "title": info.get("title", "Unknown"),
                 "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration"),
                 "uploader": info.get("uploader"),
+                "filesize": filesize
             }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Error fetching info: {str(e)}")
 
 
 @app.get("/formats")
-def get_formats(url: str):
+def get_formats(request: Request, url: str):
     """Return available video formats filtered and sorted."""
+    if _is_rate_limited(request.client.host):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
+
+    if not URL_REGEX.match(url):
+        raise HTTPException(status_code=400, detail="Invalid video URL.")
+
     try:
         with YoutubeDL(BASE_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -196,11 +282,12 @@ def get_formats(url: str):
             formats.sort(key=lambda x: x["height"], reverse=True)
             return {"title": info.get("title"), "formats": formats, "thumbnail": info.get("thumbnail")}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Error fetching formats: {str(e)}")
 
 
 @app.post("/start-download")
 def start_download(
+    request: Request,
     background_tasks: BackgroundTasks,
     url: str = Body(..., embed=True),
     format_id: Optional[str] = Body(None, embed=True),
@@ -208,8 +295,30 @@ def start_download(
     audio_only: bool = Body(False, embed=True)
 ):
     """Kicks off an asynchronous download job."""
+    if _is_rate_limited(request.client.host):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
+
+    if not URL_REGEX.match(url):
+        raise HTTPException(status_code=400, detail="Invalid video URL.")
+
+    # Preliminary size check before starting download
+    try:
+        with YoutubeDL(BASE_OPTS) as ydl:
+            info = ydl.extract_info(url, download=False)
+            filesize = info.get("filesize") or info.get("filesize_approx") or 0
+            if filesize > MAX_FILE_SIZE_MB * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"File too large ({MAX_FILE_SIZE_MB}MB limit).")
+    except HTTPException:
+        raise
+    except Exception:
+        pass # Ignore extract errors here, fallback to _background_download error handling
+
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "preparing", "progress": 0}
+    jobs[job_id] = {
+        "status": "preparing", 
+        "progress": 0, 
+        "created_at": time.time()
+    }
     
     background_tasks.add_task(
         _background_download, job_id, url, format_id, ext, audio_only
@@ -253,8 +362,14 @@ def root():
     
     raise HTTPException(status_code=404, detail="frontend/index.html not found")
 
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_cleanup_task())
+
 if __name__ == "__main__":
     import uvicorn
     # Railway sets the PORT environment variable
     port = int(os.environ.get("PORT", 8000))
+    # Pass the app object directly to avoid ModuleNotFoundError on Railway
+    # which occurs when project structure differs (Docker vs. local)
     uvicorn.run(app, host="0.0.0.0", port=port)
