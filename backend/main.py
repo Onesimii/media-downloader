@@ -113,6 +113,14 @@ else:
     print("[yt-dlp] To fix: export cookies from your browser and place cookies.txt in the backend/ directory.")
     print("[yt-dlp] See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp")
 
+# Proxy support: set YOUTUBE_PROXY env var (e.g. http://user:pass@host:port)
+YOUTUBE_PROXY = os.environ.get("YOUTUBE_PROXY")
+if YOUTUBE_PROXY:
+    BASE_OPTS["proxy"] = YOUTUBE_PROXY
+    print(f"[yt-dlp] Using proxy: {YOUTUBE_PROXY.split('@')[-1] if '@' in YOUTUBE_PROXY else YOUTUBE_PROXY}")
+else:
+    print("[yt-dlp] No proxy configured. Using direct connection.")
+
 def clean_youtube_url(url: str) -> str:
     """Strip tracking parameters (like ?si=) from YouTube URLs."""
     if "youtube.com" in url or "youtu.be" in url:
