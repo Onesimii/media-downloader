@@ -83,18 +83,26 @@ async def ensure_user_id_cookie(request: Request, call_next):
         response.set_cookie(key="user_id", value=new_id, max_age=31536000, httponly=True, samesite="lax")
     return response
 
-# Optimized yt-dlp options for speed and reliability, with bot detection countermeasures
+# yt-dlp configuration as requested by user for maximum compatibility
 BASE_OPTS = {
+    "format": "bestvideo+bestaudio/best",
     "quiet": True,
     "no_warnings": True,
     "nocheckcertificate": True,
-    "socket_timeout": 30,
-    "retries": 10,
+    "geo_bypass": True,
     "noplaylist": True,
-    "ignoreerrors": True,
-    "youtube_include_dash_manifest": True,
-    "youtube_include_hls_manifest": True,
+    "extract_flat": False,
+    "headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
 }
+
+def clean_youtube_url(url: str) -> str:
+    """Strip tracking parameters (like ?si=) from YouTube URLs."""
+    if "youtube.com" in url or "youtu.be" in url:
+        # Simple split to remove query params
+        return url.split('?')[0].split('&')[0]
+    return url
 
 # Configuration constants
 MAX_FILE_SIZE_MB = 800
@@ -513,6 +521,8 @@ def _playlist_download_task(job_id: str, playlist_name: str, tracks: List[str]):
 @app.get("/info")
 def get_info(request: Request, url: str):
     """Return basic video info (title, thumbnail, duration)."""
+    url = clean_youtube_url(url)
+    
     if _is_rate_limited(request.client.host):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
 
@@ -526,7 +536,7 @@ def get_info(request: Request, url: str):
             info = ydl.extract_info(url, download=False)
             
             if info is None:
-                raise HTTPException(status_code=400, detail="Could not retrieve information for this URL. It might be private or restricted.")
+                raise HTTPException(status_code=400, detail="Could not retrieve information for this URL. It might be private, restricted, or age-gated.")
 
             if is_spotify:
                 try:
@@ -563,6 +573,7 @@ def get_info(request: Request, url: str):
 @app.get("/formats")
 def get_formats(request: Request, url: str, user: User = Depends(get_secure_user)):
     """Return available video formats filtered and sorted."""
+    url = clean_youtube_url(url)
     is_pro = user.is_pro
 
     if _is_rate_limited(request.client.host):
@@ -580,7 +591,7 @@ def get_formats(request: Request, url: str, user: User = Depends(get_secure_user
             info = ydl.extract_info(url, download=False)
 
             if info is None:
-                raise HTTPException(status_code=400, detail="Could not extract format details. The video might be private or unavailable.")
+                raise HTTPException(status_code=400, detail="Could not extract format details. The video might be private, restricted (e.g. by uploader), or age-gated.")
 
             formats_raw = info.get("formats", [])
             if not formats_raw:
@@ -722,6 +733,7 @@ def start_download(
     user: User = Depends(get_secure_user)
 ):
     """Kicks off an asynchronous download job."""
+    url = clean_youtube_url(url)
     
     if not user.is_pro and user.downloads_today >= 5:
         raise HTTPException(status_code=403, detail="Daily download limit reached for free account (5/day). Upgrade to PRO!")
