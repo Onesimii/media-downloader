@@ -83,17 +83,21 @@ async def ensure_user_id_cookie(request: Request, call_next):
         response.set_cookie(key="user_id", value=new_id, max_age=31536000, httponly=True, samesite="lax")
     return response
 
-# yt-dlp configuration as requested by user for maximum compatibility
+# yt-dlp configuration with bot detection countermeasures
 BASE_OPTS = {
     "format": "bestvideo+bestaudio/best",
     "quiet": True,
     "no_warnings": True,
-    "nocheckcertificate": True,
-    "geo_bypass": True,
     "noplaylist": True,
-    "extract_flat": False,
-    "headers": {
+    "geo_bypass": True,
+    "nocheckcertificate": True,
+    "http_headers": {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    },
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android"]
+        }
     }
 }
 
@@ -567,7 +571,10 @@ def get_info(request: Request, url: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error fetching info: {str(e)}")
+        err_msg = str(e)
+        if "Sign in to confirm you're not a bot" in err_msg:
+            raise HTTPException(status_code=403, detail="YouTube is blocking this request (bot detection). We are trying to bypass it, but some videos may still be restricted.")
+        raise HTTPException(status_code=400, detail=f"Error fetching info: {err_msg}")
 
 
 @app.get("/formats")
@@ -659,7 +666,10 @@ def get_formats(request: Request, url: str, user: User = Depends(get_secure_user
                 "thumbnail": info.get("thumbnail")
             }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error fetching formats: {str(e)}")
+        err_msg = str(e)
+        if "Sign in to confirm you're not a bot" in err_msg:
+            raise HTTPException(status_code=403, detail="YouTube is blocking this request (bot detection). Try again in a few minutes or try another video.")
+        raise HTTPException(status_code=400, detail=f"Error fetching formats: {err_msg}")
 
 @app.get("/playlist-info")
 def get_playlist_info(request: Request, url: str, user: User = Depends(get_secure_user)):
