@@ -41,20 +41,8 @@
       align-items: center;
       padding: 40px 20px 80px;
 
-      background-image:Fix my FastAPI backend that uses yt-dlp to fetch YouTube video formats. Problem: When users paste a YouTube link,
-      yt-dlp returns the error: "Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies" . Update the yt-dlp configuration to reduce YouTube bot detection. Requirements: 1. Update yt-dlp options to mimic a real client. 2. Use the YouTube Android player client in extractor_args. 3. Enable quiet mode and ignore certificate issues. 4. Ensure the code still returns available formats correctly. 5. Handle errors safely so the server does not crash. Example configuration expected: ydl_opts= {
-
-        "quiet": True,
-        "nocheckcertificate": True,
-        "extractor_args": {
-          "youtube": {
-            "player_client": ["android"]
-          }
-        }
-      }
-
-      Provide the corrected Python code for the FastAPI function that fetches video formats using yt-dlp. radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 110, 245, 0.25) 0%, transparent 70%),
-      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(233, 107, 255, 0.12) 0%, transparent 60%);
+      background-image: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 110, 245, 0.25) 0%, transparent 70%),
+        radial-gradient(ellipse 60% 40% at 80% 80%, rgba(233, 107, 255, 0.12) 0%, transparent 60%);
     }
 
     header {
@@ -710,16 +698,10 @@
     let currentMode = 'video';
     let lastFetchedData = null;
     let lastFetchedUrl = "";
-    let userId = localStorage.getItem('md_user_id');
-
-    if (!userId) {
-      userId = 'u_' + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('md_user_id', userId);
-    }
 
     async function checkUserStatus() {
       try {
-        const res = await fetch(`${API}/user-status/${userId}`);
+        const res = await fetch(`${API}/user-status`);
         const data = await res.json();
 
         const statusDiv = document.getElementById('user-status-display');
@@ -744,7 +726,7 @@
         const res = await fetch(`${API}/create-checkout-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId })
+          body: JSON.stringify({})
         });
         const { url } = await res.json();
         window.location.href = url;
@@ -864,7 +846,7 @@
         const res = await fetch(`${API}/start-download`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, format_id, ext, audio_only, user_id: userId })
+          body: JSON.stringify({ url, format_id, ext, audio_only })
         });
         const data = await res.json();
 
@@ -941,7 +923,7 @@
           return;
         }
 
-        const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}&user_id=${userId}`);
+        const res = await fetch(`${API}/formats?url=${encodeURIComponent(url)}`);
         const data = await res.json();
         lastFetchedData = data;
         lastFetchedUrl = url;

@@ -6,7 +6,7 @@ import asyncio
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request, Depends, Response
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -42,6 +42,7 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, index=True) # Browser UUID
+    ip_address = Column(String, index=True, nullable=True) # Tracked for security
     is_pro = Column(Boolean, default=False)
     downloads_today = Column(Integer, default=0)
     last_download_date = Column(DateTime, default=datetime.datetime.utcnow)
@@ -68,7 +69,19 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
+
+@app.middleware("http")
+async def ensure_user_id_cookie(request: Request, call_next):
+    user_id = request.cookies.get("user_id")
+    response = await call_next(request)
+    if not user_id:
+        # If no user_id in request, check if one was generated or just give a new one
+        # For simplicity, if it's missing, we generate one here for the next request
+        new_id = str(uuid.uuid4())
+        response.set_cookie(key="user_id", value=new_id, max_age=31536000, httponly=True, samesite="lax")
+    return response
 
 # Optimized yt-dlp options for speed and reliability, with bot detection countermeasures
 BASE_OPTS = {
@@ -106,13 +119,26 @@ def get_db():
     finally:
         db.close()
 
-def _get_or_create_user(db, user_id: str) -> User:
+def _get_or_create_user(db, user_id: str, ip: Optional[str] = None) -> User:
+    # 1. Try finding by user_id
     user = db.query(User).filter(User.id == user_id).first()
+    
+    # 2. If not found by ID, try finding by IP (to prevent simple cookie clearing)
+    if not user and ip:
+        user = db.query(User).filter(User.ip_address == ip).first()
+    
     if not user:
-        user = User(id=user_id)
+        user = User(id=user_id, ip_address=ip)
         db.add(user)
-        db.commit()
-        db.refresh(user)
+    else:
+        # Update user_id or IP if one changed but other matched
+        if not user.ip_address:
+            user.ip_address = ip
+        if not user.id:
+            user.id = user_id
+            
+    db.commit()
+    db.refresh(user)
     
     # Reset daily downloads if new day
     now = datetime.datetime.utcnow()
@@ -121,6 +147,22 @@ def _get_or_create_user(db, user_id: str) -> User:
         user.last_download_date = now
         db.commit()
     
+    return user
+
+async def get_secure_user(request: Request) -> User:
+    """Dependency to get or create user based on secure cookies and IP."""
+    user_id = request.cookies.get("user_id")
+    ip = request.client.host
+    
+    if not user_id:
+        user_id = str(uuid.uuid4())
+        # We can't set cookie directly in dependency return, 
+        # so we'll handle it in the response if needed, 
+        # but for logic we just use this generated ID.
+        
+    db = SessionLocal()
+    user = _get_or_create_user(db, user_id, ip)
+    db.close()
     return user
 
 def _get_spotify_access_token() -> Optional[str]:
@@ -519,12 +561,9 @@ def get_info(request: Request, url: str):
 
 
 @app.get("/formats")
-def get_formats(request: Request, url: str, user_id: str = "anonymous"):
+def get_formats(request: Request, url: str, user: User = Depends(get_secure_user)):
     """Return available video formats filtered and sorted."""
-    db = SessionLocal()
-    user = _get_or_create_user(db, user_id)
     is_pro = user.is_pro
-    db.close()
 
     if _is_rate_limited(request.client.host):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
@@ -612,7 +651,7 @@ def get_formats(request: Request, url: str, user_id: str = "anonymous"):
         raise HTTPException(status_code=400, detail=f"Error fetching formats: {str(e)}")
 
 @app.get("/playlist-info")
-def get_playlist_info(request: Request, url: str):
+def get_playlist_info(request: Request, url: str, user: User = Depends(get_secure_user)):
     """Extract tracks from a Spotify playlist using yt-dlp flat-playlist."""
     if _is_rate_limited(request.client.host):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
@@ -649,18 +688,13 @@ def start_playlist_download(
     background_tasks: BackgroundTasks,
     playlist_name: str = Body(..., embed=True),
     tracks: List[str] = Body(..., embed=True),
-    user_id: str = Body("anonymous", embed=True)
+    user: User = Depends(get_secure_user)
 ):
-    """Start batch download and zipping."""
-    db = SessionLocal()
-    user = _get_or_create_user(db, user_id)
     
     if not user.is_pro:
-        db.close()
         raise HTTPException(status_code=403, detail="Playlist downloads are only available for PRO accounts. Upgrade to PRO today!")
 
     if _is_rate_limited(request.client.host):
-        db.close()
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     if len(tracks) > 30:
@@ -685,22 +719,20 @@ def start_download(
     format_id: Optional[str] = Body(None, embed=True),
     ext: Optional[str] = Body(None, embed=True),
     audio_only: bool = Body(False, embed=True),
-    user_id: str = Body("anonymous", embed=True)
+    user: User = Depends(get_secure_user)
 ):
     """Kicks off an asynchronous download job."""
-    db = SessionLocal()
-    user = _get_or_create_user(db, user_id)
     
     if not user.is_pro and user.downloads_today >= 5:
-        db.close()
         raise HTTPException(status_code=403, detail="Daily download limit reached for free account (5/day). Upgrade to PRO!")
 
     if _is_rate_limited(request.client.host):
-        db.close()
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
 
     # Increment download count
-    user.downloads_today += 1
+    db = SessionLocal()
+    db_user = db.query(User).filter(User.id == user.id).first()
+    db_user.downloads_today += 1
     db.commit()
     db.close()
 
@@ -760,20 +792,17 @@ def download_file(job_id: str):
     )
 
 
-@app.get("/user-status/{user_id}")
-def get_user_status(user_id: str):
-    db = SessionLocal()
-    user = _get_or_create_user(db, user_id)
-    status = {
+@app.get("/user-status")
+def get_user_status(user: User = Depends(get_secure_user)):
+    return {
         "is_pro": user.is_pro,
         "downloads_today": user.downloads_today,
-        "limit": 5 if not user.is_pro else "Unlimited"
+        "limit": 5 if not user.is_pro else "Unlimited",
+        "user_id": user.id
     }
-    db.close()
-    return status
 
 @app.post("/create-checkout-session")
-async def create_checkout_session(user_id: str = Body(..., embed=True)):
+async def create_checkout_session(user: User = Depends(get_secure_user)):
     try:
         checkout_session = stripe.checkout.Session.create(
             line_items=[{
@@ -783,7 +812,7 @@ async def create_checkout_session(user_id: str = Body(..., embed=True)):
             mode='subscription',
             success_url=f"http://localhost:8000/?success=true&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"http://localhost:8000/?canceled=true",
-            client_reference_id=user_id,
+            client_reference_id=user.id,
         )
         return {"url": checkout_session.url}
     except Exception as e:
@@ -808,7 +837,7 @@ async def stripe_webhook(request: Request):
         user_id = session.get("client_reference_id")
         if user_id:
             db = SessionLocal()
-            user = _get_or_create_user(db, user_id)
+            user = _get_or_create_user(db, user_id, ip=None)
             user.is_pro = True
             user.stripe_customer_id = session.get("customer")
             db.commit()
