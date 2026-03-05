@@ -83,6 +83,9 @@ async def ensure_user_id_cookie(request: Request, call_next):
         response.set_cookie(key="user_id", value=new_id, max_age=31536000, httponly=True, samesite="lax")
     return response
 
+# Cookies file path for YouTube authentication (place cookies.txt in backend/ dir)
+COOKIES_FILE = BASE_DIR / "cookies.txt"
+
 # yt-dlp configuration with bot detection countermeasures
 BASE_OPTS = {
     "format": "bestvideo+bestaudio/best",
@@ -96,10 +99,19 @@ BASE_OPTS = {
     },
     "extractor_args": {
         "youtube": {
-            "player_client": ["android"]
+            "player_client": ["android", "web"]
         }
     }
 }
+
+# If cookies.txt exists, use it for YouTube authentication
+if COOKIES_FILE.exists():
+    BASE_OPTS["cookiefile"] = str(COOKIES_FILE)
+    print(f"[yt-dlp] Using cookies from: {COOKIES_FILE}")
+else:
+    print(f"[yt-dlp] WARNING: No cookies.txt found at {COOKIES_FILE}. YouTube may block requests.")
+    print("[yt-dlp] To fix: export cookies from your browser and place cookies.txt in the backend/ directory.")
+    print("[yt-dlp] See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp")
 
 def clean_youtube_url(url: str) -> str:
     """Strip tracking parameters (like ?si=) from YouTube URLs."""

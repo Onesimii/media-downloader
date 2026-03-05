@@ -9,7 +9,7 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source
+# Copy backend source (includes cookies.txt if present)
 COPY backend/ .
 
 # Copy frontend so FastAPI can serve it
