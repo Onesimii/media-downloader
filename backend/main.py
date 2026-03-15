@@ -94,6 +94,7 @@ BASE_OPTS = {
     "noplaylist": True,
     "geo_bypass": True,
     "nocheckcertificate": True,
+    "cookiefile": str(COOKIES_FILE),
     "http_headers": {
         "User-Agent": "com.google.android.youtube"
     },
@@ -104,14 +105,7 @@ BASE_OPTS = {
     }
 }
 
-# If cookies.txt exists, use it for YouTube authentication
-if COOKIES_FILE.exists():
-    BASE_OPTS["cookiefile"] = str(COOKIES_FILE)
-    print(f"[yt-dlp] Using cookies from: {COOKIES_FILE}")
-else:
-    print(f"[yt-dlp] WARNING: No cookies.txt found at {COOKIES_FILE}. YouTube may block requests.")
-    print("[yt-dlp] To fix: export cookies from your browser and place cookies.txt in the backend/ directory.")
-    print("[yt-dlp] See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp")
+print(f"[yt-dlp] Using cookies from: {COOKIES_FILE}")
 
 # Proxy support: set YOUTUBE_PROXY env var (e.g. http://user:pass@host:port)
 YOUTUBE_PROXY = os.environ.get("YOUTUBE_PROXY")
