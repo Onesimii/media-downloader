@@ -4,3 +4,4 @@ __pycache__/
 downloads/
 .DS_Store
 .env
+backend/cookies.txt
