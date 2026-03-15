@@ -89,6 +89,7 @@ COOKIES_FILE = BASE_DIR / "cookies.txt"
 # yt-dlp configuration with bot detection countermeasures
 BASE_OPTS = {
     "format": "bestvideo+bestaudio/best",
+    "merge_output_format": "mp4",
     "quiet": True,
     "no_warnings": True,
     "noplaylist": True,
