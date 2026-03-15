@@ -15,7 +15,7 @@ import stripe
 import requests
 import json
 from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy import create_engine
 import datetime
 
@@ -181,7 +181,7 @@ def _get_or_create_user(db, user_id: str, ip: Optional[str] = None) -> User:
     
     return user
 
-async def get_secure_user(request: Request) -> User:
+async def get_secure_user(request: Request, db: Session = Depends(get_db)) -> User:
     """Dependency to get or create user based on secure cookies and IP."""
     user_id = request.cookies.get("user_id")
     ip = request.client.host
@@ -192,9 +192,7 @@ async def get_secure_user(request: Request) -> User:
         # so we'll handle it in the response if needed, 
         # but for logic we just use this generated ID.
         
-    db = SessionLocal()
     user = _get_or_create_user(db, user_id, ip)
-    db.close()
     return user
 
 def _get_spotify_access_token() -> Optional[str]:
@@ -760,7 +758,8 @@ def start_download(
     format_id: Optional[str] = Body(None, embed=True),
     ext: Optional[str] = Body(None, embed=True),
     audio_only: bool = Body(False, embed=True),
-    user: User = Depends(get_secure_user)
+    user: User = Depends(get_secure_user),
+    db: Session = Depends(get_db)
 ):
     """Kicks off an asynchronous download job."""
     url = clean_youtube_url(url)
@@ -772,11 +771,8 @@ def start_download(
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait a minute.")
 
     # Increment download count
-    db = SessionLocal()
-    db_user = db.query(User).filter(User.id == user.id).first()
-    db_user.downloads_today += 1
+    user.downloads_today += 1
     db.commit()
-    db.close()
 
     if not URL_REGEX.match(url):
         raise HTTPException(status_code=400, detail="Invalid video URL.")
