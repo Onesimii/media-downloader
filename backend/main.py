@@ -623,17 +623,14 @@ def get_formats(request: Request, url: str, user: User = Depends(get_secure_user
                 width = f.get("width")
                 height = f.get("height")
                 ext = f.get("ext", "")
-                vcodec = f.get("vcodec", "none")
-                acodec = f.get("acodec", "none")
                 
                 # 1. Basic filtering
-                if not width or not height: continue
+                if not width or height is None: continue
                 if height < 360: continue # Only >= 360p
-                if not is_pro and height > 720: continue # Limit free to 720p
                 if ext == "mhtml": continue # Exclude mhtml
                 
-                # 2. Identify if it's a video stream (combined or video-only)
-                if vcodec == "none": continue
+                # 2. Identify if it's a video stream (include all formats that contain video)
+                if f.get("vcodec") == "none" or f.get("vcodec") is None: continue
                 
                 # 2. Duplicate resolution handling (Prefer MP4 if available)
                 current_best = filtered_map.get(height)
@@ -659,7 +656,7 @@ def get_formats(request: Request, url: str, user: User = Depends(get_secure_user
                 elif height >= 1440: res_val += " (2K)"
                 
                 # Check if it needs merging (video-only)
-                is_video_only = f.get("acodec") == "none"
+                is_video_only = f.get("acodec") in ["none", None, ""]
                 info_suffix = " (Needs Merging)" if is_video_only else ""
                 
                 final_formats.append({
