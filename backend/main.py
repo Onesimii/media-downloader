@@ -88,7 +88,7 @@ COOKIES_FILE = BASE_DIR / "cookies.txt"
 
 # yt-dlp configuration with bot detection countermeasures
 BASE_OPTS = {
-    "format": "best",
+    "format": "bestvideo+bestaudio/best",
     "quiet": True,
     "no_warnings": True,
     "noplaylist": True,
@@ -403,7 +403,7 @@ def _background_download(job_id: str, url: str, format_id: Optional[str] = None,
             # Merges requested video with best audio
             ydl_opts["format"] = f"{format_id}+bestaudio/best"
         else:
-            ydl_opts["format"] = "best"
+            ydl_opts["format"] = "bestvideo+bestaudio/best"
 
         if "spotify.com/track/" in url:
             # For Spotify, fetch metadata via API/Embed (bypass yt-dlp DRM errors)
